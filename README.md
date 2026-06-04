@@ -1,60 +1,52 @@
-# Deploying MySQL on Azure
+# Deploying MySQL HeatWave on OCI
 
-This project demonstrates how to deploy a secure, private MySQL Flexible Server on Microsoft Azure using Terraform.
+This project demonstrates how to deploy a secure, private MySQL HeatWave DB System on Oracle Cloud Infrastructure using Terraform.
 
-The deployment provisions a fully managed Azure MySQL Flexible Server with public access disabled, integrated into a custom virtual network, and secured using a Private DNS Zone to enable internal name resolution. To provide convenient, private access for database interaction, the project also deploys a lightweight Ubuntu virtual machine that runs [phpMyAdmin](https://www.phpmyadmin.net/), a browser-based MySQL client accessible only within the virtual network.
+The deployment provisions a fully managed OCI MySQL HeatWave DB System with no public endpoint, isolated in a private subnet of a custom VCN. To provide convenient browser-based access for database interaction, the project also deploys a lightweight Ubuntu virtual machine running [phpMyAdmin](https://www.phpmyadmin.net/) in a public subnet.
 
-As part of the setup, the [Sakila](https://dev.mysql.com/doc/sakila/en/) sample database—a fictional movie rental database—is loaded into the MySQL instance to demonstrate real-world queries, administration, and access control in a secure, private cloud environment. This solution is ideal for developers and teams building internal-facing applications without exposing database endpoints to the public internet.
+As part of the setup, the [Sakila](https://dev.mysql.com/doc/sakila/en/) sample database—a fictional movie rental database—is loaded into the MySQL instance to demonstrate real-world queries, administration, and access control in a secure, private cloud environment.
 
 ![diagram](azure-mysql.png)
 
 ## What You'll Learn
 
-- How to deploy a fully private MySQL Flexible Server on Azure using Terraform
-- How to configure a custom virtual network, subnet, and Private DNS Zone for secure, internal connectivity
-- How to provision a VM running `phpMyAdmin` for private browser-based database access
-- Best practices for securing Azure-managed databases using private networking and infrastructure-as-code
+- How to deploy a fully private MySQL HeatWave DB System on OCI using Terraform
+- How to design a two-tier VCN with public and private subnets, security lists, and separate route tables
+- How to provision a VM running `phpMyAdmin` for browser-based database access
+- How to wire OCI credentials and passwords through Terraform state without a vault service
 
-## Overview of Azure Database for MySQL – Flexible Server
+## Overview of OCI MySQL HeatWave
 
-Historically, Azure offered two deployment options for managed MySQL databases: **Flexible Server** and **Single Server**. Single Server is being retired in March 2025, and Flexible Server is now the recommended option for all new deployments due to its superior flexibility, performance, and security features.
+**MySQL HeatWave** is Oracle's fully managed MySQL database service on OCI. It is the same MySQL engine customers run on-premises, delivered as a managed service with built-in backup, patching, and high availability options. The HeatWave query accelerator (optional) enables in-memory OLAP queries directly against operational data without ETL.
 
-This project uses **MySQL Flexible Server** with private networking, ensuring that your database is fully isolated within an Azure Virtual Network. This configuration supports secure, internal-only access—perfect for production workloads, enterprise security requirements, and regulated environments.
+This project uses MySQL HeatWave in its standard (non-accelerator) configuration, focused on private networking and operational simplicity.
 
-### Comparison: Flexible Server vs Single Server
+### OCI MySQL HeatWave vs Azure MySQL Flexible Server
 
-| **Aspect**                     | **Flexible Server**                                                                                 | **Single Server (Legacy)**                                                              |
-|-------------------------------|------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
-| **Networking**                | Supports private endpoints and full VNet integration                                                | Public access with limited VNet support                                                |
-| **Availability Zones**        | Supports zone redundancy for high availability                                                      | Limited to single-AZ deployments                                                       |
-| **Maintenance Control**       | Fine-grained control over patching and maintenance windows                                          | Limited user control                                                                   |
-| **Scaling & Bursting**        | Supports burstable SKUs, autoscaling storage, and custom backup retention                           | Limited scaling options                                                                |
-| **Stop/Start Capabilities**   | Manual stop/start for dev/test cost savings                                                         | Not supported                                                                          |
-| **High Availability**         | Built-in HA with same-zone or zone-redundant standby                                                 | Asynchronous geo-redundant replica (manual promotion required)                         |
-| **Recommended For**           | Production workloads needing performance, flexibility, and private access                          | Legacy workloads; not recommended for new deployments                                  |
-
-### Notes on Azure vs AWS
-
-While AWS offers Aurora MySQL with a distributed backend and serverless options, Azure’s Flexible Server provides a more conventional MySQL experience focused on **network security, fine-grained operational control, and predictable cost**. Azure currently does not have a direct match to Aurora's shared-storage architecture but offers powerful VNet-integrated MySQL deployments suitable for most use cases.
-
-## Choosing the Right Azure Option
-
-- **Use MySQL Flexible Server** if you require private networking, high availability, and better control over backups, maintenance, and performance.
-- [**Avoid Single Server**](https://techcommunity.microsoft.com/blog/adformysql/retiring-azure-database-for-mysql-single-server-in-2025/3829798) for new applications—it is deprecated and lacks modern enterprise capabilities.
+| **Aspect**              | **OCI MySQL HeatWave**                                       | **Azure MySQL Flexible Server**                            |
+|-------------------------|--------------------------------------------------------------|------------------------------------------------------------|
+| **Networking**          | Private subnet in VCN; no public endpoint option            | Delegated subnet + Private DNS Zone required               |
+| **DNS**                 | Private IP assigned directly from subnet; no extra DNS zone | Requires Private DNS Zone + VNet link for name resolution  |
+| **Shape model**         | Named shapes (MySQL.2, MySQL.Free, etc.)                    | SKU-based (B_Standard_B1ms, etc.)                          |
+| **Always Free tier**    | MySQL.Free (1 OCPU / 2 GB, one per tenancy)                 | Not available                                              |
+| **Provisioning time**   | 10–20 minutes                                               | 5–10 minutes                                               |
+| **HeatWave accelerator**| Optional in-memory OLAP engine — no equivalent              | Not available                                              |
+| **Backup**              | Automated backup with configurable retention                | Automated backup with geo-redundancy option                |
 
 ## Prerequisites
 
-* [An Azure Account](https://portal.azure.com/)
-* [Install AZ CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) 
+* [An OCI Account](https://cloud.oracle.com/)
+* [Install OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/cliinstall.htm)
 * [Install Latest Terraform](https://developer.hashicorp.com/terraform/install)
+* OCI CLI configured: `~/.oci/config` with a valid DEFAULT profile
 
-If this is your first time watching our content, we recommend starting with this video: [Azure + Terraform: Easy Setup](https://youtu.be/j4aRjgH5H8Q). It provides a step-by-step guide to properly configure Terraform, and the AZ CLI.
+If this is your first time working with OCI and Terraform, set `OCI_COMPARTMENT_ID` to the OCID of the compartment you want to deploy into. If unset, the scripts fall back to the tenancy root.
 
 ## Download this Repository
 
 ```bash
-git clone https://github.com/mamonaco1973/azure-mysql.git
-cd azure-mysql
+git clone https://github.com/mamonaco1973/oci-mysql.git
+cd oci-mysql
 ```
 
 ## Build the Code
@@ -62,139 +54,115 @@ cd azure-mysql
 Run [check_env](check_env.sh) then run [apply](apply.sh).
 
 ```bash
-Destroy complete! Resources: 22 destroyed.
-~/azure-mysql$ ./apply.sh
+~/oci-mysql$ ./apply.sh
 NOTE: Validating that required commands are found in your PATH.
-NOTE: az is found in the current PATH.
+NOTE: oci is found in the current PATH.
 NOTE: terraform is found in the current PATH.
 NOTE: jq is found in the current PATH.
 NOTE: All required commands are available.
-NOTE: Validating that required environment variables are set.
-NOTE: ARM_CLIENT_ID is set.
-NOTE: ARM_CLIENT_SECRET is set.
-NOTE: ARM_SUBSCRIPTION_ID is set.
-NOTE: ARM_TENANT_ID is set.
-NOTE: All required environment variables are set.
-NOTE: Logging in to Azure using Service Principal...
-NOTE: Successfully logged into Azure.
+NOTE: Checking OCI CLI connection.
+NOTE: Successfully connected to OCI.
+
 Initializing the backend...
 Initializing provider plugins...
-- Reusing previous version of hashicorp/azurerm from the dependency lock file
-- Reusing previous version of hashicorp/random from the dependency lock file
-- Using previously-installed hashicorp/azurerm v4.35.0
-- Using previously-installed hashicorp/random v3.7.2
+- Reusing previous version of oracle/oci from the dependency lock file
+- Using previously-installed oracle/oci v6.x.x
 
 Terraform has been successfully initialized!
 ```
+
+> **Note:** MySQL HeatWave DB System provisioning typically takes **10–20 minutes**. The `./apply.sh` command will wait for phpMyAdmin to become reachable before printing the final summary.
+
 ## Build Results
 
-After applying the Terraform scripts, the following Azure resources will be created:
+After applying the Terraform configuration, the following OCI resources will be created:
 
-### Virtual Network & Subnet
-- Virtual Network: `mysql-vnet`
-  - Address space: `10.0.0.0/23`
-- Subnet for MySQL Flexible Server: `mysql-subnet`
-  - Address range: `10.0.0.0/25`
-- Network Security Group: `mysql-nsg`
-  - Allows inbound MySQL traffic on port 3306 from the phpMyAdmin VM
+### VCN & Subnets
+- VCN: `mysql-vcn` — `10.0.0.0/23`
+- Private subnet: `mysql-subnet` — `10.0.0.0/25` (MySQL DB System, no public IPs)
+- Public subnet: `vm-subnet` — `10.0.1.0/25` (phpMyAdmin VM, public IP assigned)
 
-### Private DNS & Networking
-- Private DNS Zone: `privatelink.mysql.database.azure.com`
-  - Enables internal name resolution for the private MySQL server
-- Private Endpoint:
-  - Linked to the MySQL Flexible Server
-  - Associated with the custom subnet and DNS zone
+### Gateways & Route Tables
+- Internet Gateway — routes public traffic to/from the VM subnet
+- NAT Gateway — provides outbound-only internet access for the MySQL subnet
+- Route table per subnet wired to the appropriate gateway
 
-### Azure Key Vault
-- Key Vault: `creds-kv`
-  - Stores MySQL credentials securely
-  - Access granted via Key Vault policy
+### Security Lists
+- `mysql-sl` — allows TCP 3306 inbound from the VM subnet only
+- `mysql-vm-sl` — allows TCP 80 (HTTP) and TCP 22 (SSH) inbound from anywhere
 
-### MySQL Flexible Server
-- Server Name: Defined in variables
-- Configuration:
-  - Private access only (public network access disabled)
-  - Admin credentials retrieved from Azure Key Vault
-  - Preloaded with the [Sakila sample database](https://dev.mysql.com/doc/sakila/en/)
+### MySQL HeatWave DB System
+- Shape: `MySQL.2` (2 OCPUs, 32 GB RAM)
+- Storage: 50 GB minimum
+- Private IP only — no public endpoint exposed
+- Automated daily backups, 7-day retention
+- Preloaded with the [Sakila sample database](https://dev.mysql.com/doc/sakila/en/)
 
-### Virtual Machine (phpMyAdmin)
-- VM Name: `phpmyadmin-vm`
-  - Ubuntu-based VM to host the `phpMyAdmin` interface
-  - Deployed in the same virtual network
-  - Connected privately to the MySQL server
-  - Configured to launch `phpMyAdmin` and expose a browser-based MySQL UI
+### phpMyAdmin VM
+- Shape: `VM.Standard.E4.Flex` (1 OCPU, 4 GB RAM)
+- Ubuntu 24.04 LTS
+- Public IP — accessible at `http://<public-ip>`
+- Pre-configured to connect to the MySQL DB System private IP over TLS
+
+## Credentials
+
+After a successful apply, retrieve credentials with:
+
+```bash
+./get_password.sh
+```
+
+Output:
+```
+MySQL (HeatWave DB System):
+  Username : sysadmin
+  Password : <generated>
+  Host     : 10.0.0.x (private)
+
+phpMyAdmin VM:
+  Username : ubuntu
+  Password : <generated>
+  Public IP: <public-ip>
+  URL      : http://<public-ip>
+```
 
 ## phpMyAdmin Demo
 
-[phpMyAdmin](https://www.phpmyadmin.net/) is a popular web-based MySQL administration tool that allows users to interact with MySQL and MariaDB databases through a browser interface. It supports query execution, database browsing, import/export, and user management—all from a secure, private environment.
+[phpMyAdmin](https://www.phpmyadmin.net/) is a popular web-based MySQL administration tool that allows users to interact with MySQL databases through a browser interface. It supports query execution, database browsing, import/export, and user management.
 
 ![phpMyAdmin](phpmyadmin.png)
 
 Query 1:
 ```sql
 SELECT
-    -- Select the film title from the 'film' table and label the column 'film_title'
     f.title AS film_title,
-
-    -- Concatenate the actor's first and last name with a space between them and label the column 'actor_name'
     CONCAT(a.first_name, ' ', a.last_name) AS actor_name
-
 FROM
-    -- Use the 'film' table as the main source of data (alias 'f')
     sakila.film f
-
-    -- Join the 'film_actor' link table to associate films with their actors by film_id
-    JOIN sakila.film_actor fa
-        ON f.film_id = fa.film_id
-
-    -- Join the 'actor' table to get actor name details by actor_id
-    JOIN sakila.actor a
-        ON fa.actor_id = a.actor_id
-
--- Sort the results first by film title alphabetically, then by actor name alphabetically within each film
+    JOIN sakila.film_actor fa ON f.film_id = fa.film_id
+    JOIN sakila.actor a ON fa.actor_id = a.actor_id
 ORDER BY
-    f.title,
-    actor_name
-
--- Return only the first 20 rows of the result set
-LIMIT 20;                                                   
+    f.title, actor_name
+LIMIT 20;
 ```
 
 Query 2:
 
 ```sql
 SELECT
-    -- Select the film title from the 'film' table
     f.title,
-
-    -- Concatenate all actor full names (first + last name) into a single string
-    -- GROUP_CONCAT builds this list, ordering by actor last name, separating each with a comma and space
     GROUP_CONCAT(
         CONCAT(a.first_name, ' ', a.last_name)
         ORDER BY a.last_name
         SEPARATOR ', '
     ) AS actor_names
-
 FROM
-    -- Use the 'film' table as the starting point (aliased as 'f')
     sakila.film f
-
-    -- Join 'film_actor' to link films to their actors via film_id
-    JOIN sakila.film_actor fa
-        ON f.film_id = fa.film_id
-
-    -- Join 'actor' to get the actual actor names via actor_id
-    JOIN sakila.actor a
-        ON fa.actor_id = a.actor_id
-
--- Group results by film title so each row represents a unique film
+    JOIN sakila.film_actor fa ON f.film_id = fa.film_id
+    JOIN sakila.actor a ON fa.actor_id = a.actor_id
 GROUP BY
     f.title
-
--- Sort the output rows alphabetically by film title
 ORDER BY
     f.title
-
--- Only return the first 10 rows (the top 10 film titles alphabetically)
 LIMIT 10;
 ```

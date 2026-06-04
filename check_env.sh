@@ -35,3 +35,18 @@ if ! oci iam region list &>/dev/null; then
 fi
 
 echo "NOTE: Successfully connected to OCI."
+
+# ------------------------------------------------------------------------------
+# OCI Compartment Check
+# ------------------------------------------------------------------------------
+echo "NOTE: Checking OCI_COMPARTMENT_ID environment variable."
+if [ -z "${OCI_COMPARTMENT_ID:-}" ]; then
+  tenancy=$(awk -F'=' '/^tenancy[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' ~/.oci/config)
+  if [ -z "$tenancy" ]; then
+    echo "ERROR: OCI_COMPARTMENT_ID is not set and tenancy could not be read from ~/.oci/config."
+    exit 1
+  fi
+  echo "WARNING: OCI_COMPARTMENT_ID not set — will use tenancy OCID from ~/.oci/config."
+else
+  echo "NOTE: OCI_COMPARTMENT_ID is set."
+fi
