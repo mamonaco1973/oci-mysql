@@ -1,71 +1,71 @@
-# =================================================================================
-# AZURE PROVIDER CONFIGURATION
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Configure the AzureRM provider to enable Terraform interaction with Azure
-#   resource management APIs.
-#
-# Notes:
-#   - The `features {}` block is mandatory, even when no features are configured.
-#   - Removing this block will cause provider initialization to fail.
-# =================================================================================
-provider "azurerm" {
-  features {}
+# ================================================================================
+# Provider Configuration
+# Auth is read from ~/.oci/config DEFAULT profile — no credentials in code
+# ================================================================================
+
+terraform {
+  required_providers {
+    oci = {
+      source  = "oracle/oci"
+      version = "~> 6.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+    local = {
+      source  = "hashicorp/local"
+      version = "~> 2.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
+  }
 }
 
-# =================================================================================
-# CURRENT AZURE SUBSCRIPTION CONTEXT
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Retrieve metadata for the currently active Azure subscription.
-#
-# Exposed Attributes:
-#   - subscription_id : Unique identifier for the Azure subscription
-#   - display_name    : Human-readable subscription name
-#   - tenant_id       : Azure AD tenant associated with the subscription
-#
-# Usage:
-#   - Resource tagging
-#   - Tenant- or subscription-scoped logic
-#   - Cross-subscription references
-# =================================================================================
-data "azurerm_subscription" "primary" {}
+provider "oci" {
+  region = var.region
+}
 
-# =================================================================================
-# AUTHENTICATED CLIENT CONTEXT
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Retrieve identity details for the authenticated Azure CLI user or service
-#   principal executing the Terraform workflow.
-#
-# Exposed Attributes:
-#   - client_id : Application (service principal) client ID
-#   - object_id : Object ID of the authenticated identity
-#   - tenant_id : Azure AD tenant ID
-#
-# Usage:
-#   - Role assignments
-#   - Managed identity bindings
-#   - Secure resource access configuration
-# =================================================================================
-data "azurerm_client_config" "current" {}
+# ================================================================================
+# SSH Key Pair
+# Generated fresh each deploy — private key written to keys/ (gitignored).
+# ECDSA P-256 is smaller and faster than RSA while being equally secure.
+# ================================================================================
 
-# =================================================================================
-# PRIMARY RESOURCE GROUP
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Create the top-level Azure resource group used to contain all infrastructure
-#   resources deployed by this Terraform project.
-#
-# Inputs:
-#   - project_resource_group : Resource group name
-#   - project_location       : Azure region for deployment
-#
-# Notes:
-#   - Acts as a logical boundary for lifecycle management
-#   - Simplifies cleanup, access control, and cost tracking
-# =================================================================================
-resource "azurerm_resource_group" "project_rg" {
-  name     = var.project_resource_group
-  location = var.project_location
+resource "tls_private_key" "ssh" {
+  algorithm   = "ECDSA"
+  ecdsa_curve = "P256"
+}
+
+resource "local_file" "private_key" {
+  content         = tls_private_key.ssh.private_key_openssh
+  filename        = "./keys/Private_Key"
+  file_permission = "0600"
+}
+
+# ================================================================================
+# Availability Domains
+# OCI requires explicit AD selection — resolved dynamically so this works
+# across regions with different AD counts.
+# ================================================================================
+
+data "oci_identity_availability_domains" "ads" {
+  compartment_id = var.compartment_ocid
+}
+
+# ================================================================================
+# Image Lookup
+# Queries for the latest Ubuntu 24.04 image compatible with VM.Standard.E4.Flex.
+# sort_order = DESC returns the newest matching image.
+# ================================================================================
+
+data "oci_core_images" "ubuntu" {
+  compartment_id           = var.compartment_ocid
+  operating_system         = "Canonical Ubuntu"
+  operating_system_version = "24.04"
+  shape                    = "VM.Standard.E4.Flex"
+  sort_by                  = "TIMECREATED"
+  sort_order               = "DESC"
 }

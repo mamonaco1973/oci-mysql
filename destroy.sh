@@ -1,31 +1,15 @@
 #!/bin/bash
-# ==============================================================================
-# File: destroy.sh
-# ==============================================================================
-# Purpose:
-#   Tear down the MySQL Terraform stack and all associated Azure resources.
-#
-# Behavior:
-#   - Fail-fast: exit immediately on any error
-#   - Linear execution with explicit directory changes
-#   - Destroys all resources defined in the MySQL stack
-#
-# Requirements:
-#   - Terraform must be installed and available in PATH
-#   - Azure authentication must already be established
-# ==============================================================================
 set -euo pipefail
 
-# ==============================================================================
-# STEP 1: Destroy MySQL infrastructure
-# ==============================================================================
-cd 01-mysql
+# ================================================================================
+# Destroy — tear down the MySQL Terraform stack and all OCI resources
+# ================================================================================
 
-terraform init
-terraform destroy -auto-approve
+# Resolve compartment — fall back to tenancy OCID if OCI_COMPARTMENT_ID is unset
+if [ -z "${OCI_COMPARTMENT_ID:-}" ]; then
+  OCI_COMPARTMENT_ID=$(awk -F'=' '/^tenancy[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' ~/.oci/config)
+fi
+export TF_VAR_compartment_ocid="$OCI_COMPARTMENT_ID"
 
-cd ..
-
-# ==============================================================================
-# END
-# ==============================================================================
+terraform -chdir=01-mysql init
+terraform -chdir=01-mysql destroy -auto-approve

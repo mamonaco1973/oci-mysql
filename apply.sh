@@ -1,44 +1,23 @@
 #!/bin/bash
-# ==============================================================================
-# File: apply.sh
-# ==============================================================================
-# Purpose:
-#   Validate prerequisites, deploy the MySQL Terraform stack, and run
-#   post-deployment validation.
-#
-# Behavior:
-#   - Fail-fast: exit immediately on any error
-#   - No directory stack manipulation
-#   - Linear, easy-to-read execution flow
-#
-# Requirements:
-#   - check_env.sh must exist and be executable
-#   - Terraform must be installed and available in PATH
-#   - Azure authentication must already be established
-# ==============================================================================
 set -euo pipefail
 
-# ==============================================================================
-# STEP 0: Validate environment prerequisites
-# ==============================================================================
+# ================================================================================
+# Apply — validate env, deploy MySQL stack, run post-deployment validation
+# ================================================================================
+
 ./check_env.sh
+if [ $? -ne 0 ]; then
+  echo "ERROR: Environment check failed. Exiting."
+  exit 1
+fi
 
-# ==============================================================================
-# STEP 1: Provision MySQL infrastructure
-# ==============================================================================
-cd 01-mysql
+# Resolve compartment — fall back to tenancy OCID if OCI_COMPARTMENT_ID is unset
+if [ -z "${OCI_COMPARTMENT_ID:-}" ]; then
+  OCI_COMPARTMENT_ID=$(awk -F'=' '/^tenancy[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' ~/.oci/config)
+fi
+export TF_VAR_compartment_ocid="$OCI_COMPARTMENT_ID"
 
-terraform init
-terraform apply -auto-approve
+terraform -chdir=01-mysql init
+terraform -chdir=01-mysql apply -auto-approve
 
-cd ..
-
-# ==============================================================================
-# STEP 2: Run post-deployment validation
-# ==============================================================================
-echo ""
 ./validate.sh
-
-# ==============================================================================
-# END
-# ==============================================================================

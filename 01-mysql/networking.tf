@@ -1,172 +1,156 @@
-# =================================================================================
-# VIRTUAL NETWORK BASELINE
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Create a single Virtual Network (VNet) to host all project subnets, including
-#   the MySQL Flexible Server delegated subnet and an application/VM subnet.
+# ================================================================================
+# VCN
+# Two-tier network: public subnet hosts phpMyAdmin; private subnet hosts
+# the MySQL DB System.
 #
-# Addressing:
-#   - VNet CIDR: 10.0.0.0/23 (512 addresses)
-#   - Subnets:
-#       * MySQL: 10.0.0.0/25 (128 addresses)
-#       * VM:    10.0.1.0/25 (128 addresses)
-#
-# Notes:
-#   - Keep CIDR planning consistent across AWS/Azure/GCP parity repos
-# =================================================================================
-resource "azurerm_virtual_network" "project-vnet" {
-  name                = var.project_vnet
-  address_space       = ["10.0.0.0/23"]
-  location            = var.project_location
-  resource_group_name = azurerm_resource_group.project_rg.name
+# CIDR layout — 10.0.0.0/23:
+#   10.0.0.0/25  — mysql-subnet (private, DB system)
+#   10.0.1.0/25  — vm-subnet    (public,  phpMyAdmin)
+# ================================================================================
+
+resource "oci_core_vcn" "main" {
+  compartment_id = var.compartment_ocid
+  cidr_block     = "10.0.0.0/23"
+  display_name   = "mysql-vcn"
+  # dns_label must be alphanumeric and ≤ 15 chars
+  dns_label = "mysqlvcn"
 }
 
-# =================================================================================
-# MYSQL FLEXIBLE SERVER SUBNET (DELEGATED)
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Define the subnet used by MySQL Flexible Server. Azure requires this subnet
-#   to be delegated to the MySQL Flexible Server service.
-#
-# Notes:
-#   - Delegation is required for Flexible Server deployments into a VNet
-#   - Use a dedicated subnet to keep database traffic isolated and controlled
-# =================================================================================
-resource "azurerm_subnet" "mysql-subnet" {
-  name                 = var.project_subnet
-  resource_group_name  = azurerm_resource_group.project_rg.name
-  virtual_network_name = azurerm_virtual_network.project-vnet.name
-  address_prefixes     = ["10.0.0.0/25"]
+resource "oci_core_internet_gateway" "main" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.main.id
+  display_name   = "mysql-igw"
+  enabled        = true
+}
 
-  # -----------------------------------------------------------------------------
-  # Delegation
-  # - Required for MySQL Flexible Server to attach to this subnet
-  # -----------------------------------------------------------------------------
-  delegation {
-    name = "delegation"
+# NAT gateway provides egress-only internet access for the MySQL subnet —
+# the DB system cannot be reached from the internet through it
+resource "oci_core_nat_gateway" "main" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.main.id
+  display_name   = "mysql-nat"
+  block_traffic  = false
+}
 
-    service_delegation {
-      name    = "Microsoft.DBforMySQL/flexibleServers"
-      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+# ================================================================================
+# Route Tables
+# ================================================================================
+
+# vm-subnet routes through the IGW — phpMyAdmin needs a public IP and internet
+resource "oci_core_route_table" "vm" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.main.id
+  display_name   = "mysql-vm-rt"
+
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_internet_gateway.main.id
+  }
+}
+
+# mysql-subnet routes through NAT — DB system has no public endpoint
+resource "oci_core_route_table" "mysql" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.main.id
+  display_name   = "mysql-db-rt"
+
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_nat_gateway.main.id
+  }
+}
+
+# ================================================================================
+# Security Lists
+# ================================================================================
+
+# MySQL subnet — allow TCP 3306 only from the VM subnet CIDR
+resource "oci_core_security_list" "mysql" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.main.id
+  display_name   = "mysql-sl"
+
+  ingress_security_rules {
+    protocol  = "6" # TCP
+    source    = "10.0.1.0/25"
+    stateless = false
+
+    tcp_options {
+      min = 3306
+      max = 3306
     }
   }
-}
 
-# =================================================================================
-# MYSQL SUBNET NETWORK SECURITY GROUP
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Apply subnet-level security controls for MySQL traffic.
-#
-# Notes:
-#   - This example allows inbound TCP/3306 from any source, which is appropriate
-#     only for lab/demo environments
-#   - For production, restrict source_address_prefix to the VM subnet CIDR,
-#     a jump host range, or specific private IP ranges
-# =================================================================================
-resource "azurerm_network_security_group" "mysql-nsg" {
-  name                = "mysql-nsg"
-  location            = var.project_location
-  resource_group_name = azurerm_resource_group.project_rg.name
-
-  # -----------------------------------------------------------------------------
-  # Inbound: MySQL
-  # -----------------------------------------------------------------------------
-  security_rule {
-    name                       = "Allow-MySQL"
-    priority                   = 1000
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "3306"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
+  egress_security_rules {
+    protocol    = "all"
+    destination = "0.0.0.0/0"
+    stateless   = false
   }
 }
 
-# =================================================================================
-# MYSQL SUBNET -> NSG ASSOCIATION
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Bind the MySQL NSG to the MySQL subnet so rules are enforced at the subnet
-#   boundary for all resources deployed into that subnet.
-# =================================================================================
-resource "azurerm_subnet_network_security_group_association" "mysql-nsg-assoc" {
-  subnet_id                 = azurerm_subnet.mysql-subnet.id
-  network_security_group_id = azurerm_network_security_group.mysql-nsg.id
-}
+# VM subnet — allow HTTP (80) and SSH (22) from internet
+resource "oci_core_security_list" "vm" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.main.id
+  display_name   = "mysql-vm-sl"
 
-# =================================================================================
-# VM / APPLICATION SUBNET
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Create a general-purpose subnet for virtual machines or application
-#   workloads that connect to the MySQL server over the private network.
-# =================================================================================
-resource "azurerm_subnet" "vm-subnet" {
-  name                 = "vm-subnet"
-  resource_group_name  = azurerm_resource_group.project_rg.name
-  virtual_network_name = azurerm_virtual_network.project-vnet.name
-  address_prefixes     = ["10.0.1.0/25"]
-}
+  ingress_security_rules {
+    protocol  = "6" # TCP
+    source    = "0.0.0.0/0"
+    stateless = false
 
-# =================================================================================
-# VM SUBNET NETWORK SECURITY GROUP
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Apply subnet-level security controls for the VM/application subnet.
-#
-# Notes:
-#   - This example allows inbound HTTP (80) and SSH (22) from any source, which
-#     is appropriate only for lab/demo environments
-#   - For production, restrict source_address_prefix and consider using Azure
-#     Bastion, VPN, or private access patterns
-# =================================================================================
-resource "azurerm_network_security_group" "vm-nsg" {
-  name                = "vm-nsg"
-  location            = var.project_location
-  resource_group_name = azurerm_resource_group.project_rg.name
-
-  # -----------------------------------------------------------------------------
-  # Inbound: HTTP
-  # -----------------------------------------------------------------------------
-  security_rule {
-    name                       = "Allow-HTTP"
-    priority                   = 1000
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "80"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
+    tcp_options {
+      min = 80
+      max = 80
+    }
   }
 
-  # -----------------------------------------------------------------------------
-  # Inbound: SSH
-  # -----------------------------------------------------------------------------
-  security_rule {
-    name                       = "Allow-SSH"
-    priority                   = 1001
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "22"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
+  ingress_security_rules {
+    protocol  = "6" # TCP
+    source    = "0.0.0.0/0"
+    stateless = false
+
+    tcp_options {
+      min = 22
+      max = 22
+    }
+  }
+
+  egress_security_rules {
+    protocol    = "all"
+    destination = "0.0.0.0/0"
+    stateless   = false
   }
 }
 
-# =================================================================================
-# VM SUBNET -> NSG ASSOCIATION
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Bind the VM NSG to the VM subnet so rules are enforced for all workloads
-#   deployed into that subnet.
-# =================================================================================
-resource "azurerm_subnet_network_security_group_association" "vm-nsg-assoc" {
-  subnet_id                 = azurerm_subnet.vm-subnet.id
-  network_security_group_id = azurerm_network_security_group.vm-nsg.id
+# ================================================================================
+# Subnets
+# ================================================================================
+
+# Private subnet — MySQL DB System lives here; no public IPs permitted
+resource "oci_core_subnet" "mysql" {
+  compartment_id    = var.compartment_ocid
+  vcn_id            = oci_core_vcn.main.id
+  cidr_block        = "10.0.0.0/25"
+  display_name      = "mysql-subnet"
+  dns_label         = "mysqlsub"
+  route_table_id    = oci_core_route_table.mysql.id
+  security_list_ids = [oci_core_security_list.mysql.id]
+
+  prohibit_public_ip_on_vnic = true
+}
+
+# Public subnet — phpMyAdmin VM lives here with a public IP
+resource "oci_core_subnet" "vm" {
+  compartment_id    = var.compartment_ocid
+  vcn_id            = oci_core_vcn.main.id
+  cidr_block        = "10.0.1.0/25"
+  display_name      = "vm-subnet"
+  dns_label         = "vmsub"
+  route_table_id    = oci_core_route_table.vm.id
+  security_list_ids = [oci_core_security_list.vm.id]
+
+  prohibit_public_ip_on_vnic = false
 }

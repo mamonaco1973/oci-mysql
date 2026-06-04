@@ -1,39 +1,51 @@
 #!/bin/bash
 
-# ---------------------------------------------------------------
+# Redirect all output for post-boot debugging
+exec > /root/userdata.log 2>&1
+
+# -----------------------------------------------------------------------
+# WAIT FOR NETWORK
+# OCI fires cloud-init before internet routing is fully established
+# -----------------------------------------------------------------------
+echo "NOTE: Waiting for network connectivity..."
+until curl -4 -sf --max-time 5 http://archive.ubuntu.com/ > /dev/null 2>&1; do
+  echo "NOTE: Network not ready, retrying in 10 seconds..."
+  sleep 10
+done
+echo "NOTE: Network ready."
+
+# Force IPv4 for apt — OCI NAT gateway drops IPv6 silently
+echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
+
+# -----------------------------------------------------------------------
 # UPDATE & INSTALL WEB + PHP + MYSQL CLIENT TOOLS
-# ---------------------------------------------------------------
+# Retry loop handles the apt lock race at early OCI boot
+# -----------------------------------------------------------------------
+for attempt in $(seq 1 10); do
+  apt-get update -y && break
+  echo "NOTE: apt-get update attempt $attempt failed, retrying in 30s..."
+  pkill -9 -f apt 2>/dev/null || true
+  sleep 30
+done
 
-# Update all package lists silently and auto-confirm upgrades
-sudo apt update -y
+apt-get install -y apache2 php php-mysql php-mbstring php-zip php-gd php-json php-curl php-xml unzip mysql-client-core-8.0
 
-# Install Apache web server, PHP, required PHP extensions, unzip, and MySQL CLI tools (no server)
-sudo apt install apache2 php php-mysql php-mbstring php-zip php-gd php-json php-curl php-xml unzip mysql-client-core-8.0 -y
+# Set ubuntu user password for SSH password / console fallback
+echo "ubuntu:${VM_PASSWORD}" | chpasswd
 
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------------
 # DOWNLOAD & DEPLOY PHPMYADMIN
-# ---------------------------------------------------------------
-
-# Move to Apache's shared web resource directory
+# -----------------------------------------------------------------------
 cd /usr/share
 
-# Download phpMyAdmin 5.2.2 from official source (zip archive)
 sudo wget https://files.phpmyadmin.net/phpMyAdmin/5.2.2/phpMyAdmin-5.2.2-all-languages.zip
-
-# Unzip silently and overwrite without prompting (-o = overwrite, -q = quiet)
 sudo unzip -o -q phpMyAdmin-5.2.2-all-languages.zip
-
-# Rename extracted folder to a clean, consistent name
 sudo mv phpMyAdmin-5.2.2-all-languages phpmyadmin
-
-# Fix ownership so Apache (www-data) can read/write to it as needed
 sudo chown -R www-data:www-data /usr/share/phpmyadmin
 
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------------
 # CONFIGURE APACHE TO SERVE PHPMYADMIN
-# ---------------------------------------------------------------
-
-# Write an Apache config file that exposes phpMyAdmin at /phpmyadmin path
+# -----------------------------------------------------------------------
 sudo tee /etc/apache2/conf-available/phpmyadmin.conf > /dev/null <<EOF
 Alias /phpmyadmin /usr/share/phpmyadmin
 
@@ -44,42 +56,30 @@ Alias /phpmyadmin /usr/share/phpmyadmin
 </Directory>
 EOF
 
-# Enable the new phpMyAdmin config
 sudo a2enconf phpmyadmin
-
-# Reload Apache to apply the new configuration
 sudo systemctl reload apache2
 
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------------
 # CONFIGURE PHPMYADMIN TO CONNECT TO REMOTE MYSQL SERVER
-# ---------------------------------------------------------------
-
-# Copy sample config to active config file
-sudo cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php
-
-# Define MySQL connection variables
+# -----------------------------------------------------------------------
 MYSQL_HOST="${MYSQL_HOST}"
 PASSWORD="${PASSWORD}"
 USER="${USER}"
 
-# Copy sample config again (redundant — already done above)
 sudo cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php
 
-# Inject a randomly generated 32-byte blowfish secret to secure cookies
 sudo sed -i "s|\(\$cfg\['blowfish_secret'\] = \).*|\1'$(openssl rand -hex 16)';|" /usr/share/phpmyadmin/config.inc.php
-
-# Update the MySQL host in config.inc.php to point to the remote server
 sudo sed -i "s|\(\$cfg\['Servers'\]\[\$i\]\['host'\] = \).*|\1'$MYSQL_HOST';|" /usr/share/phpmyadmin/config.inc.php
 
-# Force SSL connection to MySQL server
+# OCI MySQL HeatWave requires TLS — disable cert verification for lab use
 sudo tee -a /usr/share/phpmyadmin/config.inc.php > /dev/null <<'EOF'
 $cfg['Servers'][$i]['ssl'] = true;
 $cfg['Servers'][$i]['ssl_verify'] = false;
 EOF
 
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------------
 # REPLACE DEFAULT INDEX.HTML WITH REDIRECT TO /phpmyadmin
-# ---------------------------------------------------------------
+# -----------------------------------------------------------------------
 sudo tee /var/www/html/index.html > /dev/null <<EOF
 <!DOCTYPE html>
 <html>
@@ -96,40 +96,21 @@ sudo tee /var/www/html/index.html > /dev/null <<EOF
 </html>
 EOF
 
-# ---------------------------------------------------------------
-# RESTART APACHE TO APPLY FINAL CHANGES
-# ---------------------------------------------------------------
+sudo systemctl restart apache2
 
-systemctl restart apache2
-
-# ---------------------------------------------------------------
-# OPTIONAL: DOWNLOAD & LOAD SAKILA SAMPLE DATABASE
-# ---------------------------------------------------------------
-
-# Clean up any old sakila files
+# -----------------------------------------------------------------------
+# DOWNLOAD & LOAD SAKILA SAMPLE DATABASE
+# -----------------------------------------------------------------------
 cd /tmp
 rm -f -r sakila-db
 rm -f -r sakila*.zip*
 
-# Download Sakila sample database from MySQL docs site
 wget -q https://downloads.mysql.com/docs/sakila-db.zip
-
-# Unzip the Sakila zip archive silently
 unzip -o -q sakila-db.zip
 
-# Create the 'sakila' database if it doesn't already exist
-mysql -h "$MYSQL_HOST" -u "$USER" -p"$PASSWORD" -e "CREATE DATABASE IF NOT EXISTS sakila;"
+mysql -h "$MYSQL_HOST" -u "$USER" -p"$PASSWORD" --ssl-mode=REQUIRED -e "CREATE DATABASE IF NOT EXISTS sakila;"
+mysql -h "$MYSQL_HOST" -u "$USER" -p"$PASSWORD" --ssl-mode=REQUIRED sakila < ./sakila-db/sakila-schema.sql
+mysql -h "$MYSQL_HOST" -u "$USER" -p"$PASSWORD" --ssl-mode=REQUIRED sakila < ./sakila-db/sakila-data.sql
+mysql -h "$MYSQL_HOST" -u "$USER" -p"$PASSWORD" --ssl-mode=REQUIRED < /usr/share/phpmyadmin/sql/create_tables.sql
 
-# Load schema (tables, constraints) into sakila DB
-mysql -h "$MYSQL_HOST" -u "$USER" -p"$PASSWORD" sakila < ./sakila-db/sakila-schema.sql
-
-# Load data (rows/records) into sakila DB
-mysql -h "$MYSQL_HOST" -u "$USER" -p"$PASSWORD" sakila < ./sakila-db/sakila-data.sql
-
-# Load phpMyAdmin's default tables into the MySQL server
-mysql -h "$MYSQL_HOST" -u "$USER" -p"$PASSWORD" < /usr/share/phpmyadmin/sql/create_tables.sql
-
-# ---------------------------------------------------------------------
-# DONE — phpMyAdmin is live at http://<your-server-ip>/phpmyadmin
-# Log in using: sysadmin@mysql-instance-qbge.mysql.database.azure.com
-# ---------------------------------------------------------------------
+echo "NOTE: Done."

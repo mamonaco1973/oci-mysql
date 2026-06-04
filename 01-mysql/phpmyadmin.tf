@@ -1,133 +1,46 @@
-# =================================================================================
-# PHPMyAdmin VM NETWORK INTERFACE
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Create a Network Interface (NIC) for the PHPMyAdmin VM and attach it to the
-#   application/VM subnet.
+# ================================================================================
+# phpMyAdmin VM
+# ================================================================================
+# Ubuntu instance in the public VM subnet. Bootstrapped via cloud-init with
+# phpMyAdmin pre-configured to connect to the MySQL DB System private IP.
 #
 # Notes:
-#   - The NIC receives a private IP from the VM subnet
-#   - A Public IP is associated to provide inbound access (lab/demo use)
-# =================================================================================
-resource "azurerm_network_interface" "phpmyadmin-vm-nic" {
-  name                = "phpmyadmin-vm-nic"
-  location            = var.project_location
-  resource_group_name = azurerm_resource_group.project_rg.name
+#   - assign_public_ip = true gives an ephemeral public IP from the IGW subnet
+#   - VM_PASSWORD sets the ubuntu user's password for console/SSH fallback
+#   - depends_on ensures MySQL is ready before cloud-init attempts sakila import
+# ================================================================================
 
-  # -----------------------------------------------------------------------------
-  # IP configuration
-  # - Dynamic private IP allocation from the VM subnet
-  # - Public IP association for external access (demo convenience)
-  # -----------------------------------------------------------------------------
-  ip_configuration {
-    name                          = "internal"
-    subnet_id                     = azurerm_subnet.vm-subnet.id
-    private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.phpmyadmin_vm_public_ip.id
-  }
-}
+resource "oci_core_instance" "phpmyadmin" {
+  compartment_id      = var.compartment_ocid
+  availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
+  display_name        = "phpmyadmin-vm"
+  shape               = "VM.Standard.E4.Flex"
 
-# =================================================================================
-# PHPMyAdmin LINUX VIRTUAL MACHINE
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Deploy a small Ubuntu VM that hosts PHPMyAdmin for interacting with the MySQL
-#   Flexible Server instance.
-#
-# Key Characteristics:
-#   - Attached to the VM subnet via a dedicated NIC
-#   - Bootstrapped via cloud-init (custom_data) using a template script
-#   - Uses password authentication for simplicity in lab/demo scenarios
-#
-# Notes:
-#   - For production, prefer SSH keys and disable password authentication
-#   - Keep VM size small; this host is intended as a lightweight web client
-# =================================================================================
-resource "azurerm_linux_virtual_machine" "phpmyadmin-vm" {
-  name                = "phpmyadmin-vm"
-  location            = var.project_location
-  resource_group_name = azurerm_resource_group.project_rg.name
-
-  size           = "Standard_B1s"
-  admin_username = "sysadmin"
-  admin_password = random_password.vm_password.result
-
-  # -----------------------------------------------------------------------------
-  # Authentication
-  # - Password auth enabled for lab/demo usability
-  # -----------------------------------------------------------------------------
-  disable_password_authentication = false
-
-  # -----------------------------------------------------------------------------
-  # Networking
-  # - Attach the VM to the pre-created NIC
-  # -----------------------------------------------------------------------------
-  network_interface_ids = [
-    azurerm_network_interface.phpmyadmin-vm-nic.id
-  ]
-
-  # -----------------------------------------------------------------------------
-  # OS disk
-  # - Standard_LRS keeps costs low for non-performance workloads
-  # -----------------------------------------------------------------------------
-  os_disk {
-    caching              = "ReadWrite"
-    storage_account_type = "Standard_LRS"
+  shape_config {
+    ocpus         = 1
+    memory_in_gbs = 4
   }
 
-  # -----------------------------------------------------------------------------
-  # Base image
-  # - Ubuntu 24.04 LTS from the Azure Marketplace
-  #
-  # Notes:
-  #   - "latest" improves convenience but reduces strict repeatability
-  #   - For repeatable builds, pin version to a specific image version
-  # -----------------------------------------------------------------------------
-  source_image_reference {
-    publisher = "canonical"
-    offer     = "ubuntu-24_04-lts"
-    sku       = "server"
-    version   = "latest"
+  source_details {
+    source_type = "image"
+    source_id   = data.oci_core_images.ubuntu.images[0].id
   }
 
-  # -----------------------------------------------------------------------------
-  # Cloud-init bootstrap
-  # - Provide a rendered script as custom_data (base64 encoded)
-  #
-  # Inputs passed into the template:
-  #   - PASSWORD   : MySQL admin password for PHPMyAdmin login convenience
-  #   - MYSQL_HOST : MySQL server FQDN (computed from the unique suffix)
-  #   - USER       : MySQL admin username
-  # -----------------------------------------------------------------------------
-  custom_data = base64encode(templatefile("./scripts/phpmyadmin.sh.template", {
-    PASSWORD   = random_password.mysql_password.result
-    MYSQL_HOST = "mysql-instance-${random_string.suffix.result}.mysql.database.azure.com"
-    USER       = "sysadmin"
-  }))
+  create_vnic_details {
+    subnet_id        = oci_core_subnet.vm.id
+    assign_public_ip = true
+    display_name     = "phpmyadmin-vnic"
+  }
 
-  # -----------------------------------------------------------------------------
-  # Ordering
-  # - Ensure MySQL exists before bootstrapping the client VM
-  # -----------------------------------------------------------------------------
-  depends_on = [azurerm_mysql_flexible_server.mysql_instance]
-}
+  metadata = {
+    ssh_authorized_keys = tls_private_key.ssh.public_key_openssh
+    user_data = base64encode(templatefile("./scripts/phpmyadmin.sh.template", {
+      PASSWORD    = random_password.mysql_password.result
+      MYSQL_HOST  = oci_mysql_mysql_db_system.mysql.ip_address
+      USER        = "sysadmin"
+      VM_PASSWORD = random_password.vm_password.result
+    }))
+  }
 
-# =================================================================================
-# PHPMyAdmin PUBLIC IP
-# ---------------------------------------------------------------------------------
-# Purpose:
-#   Provide a static, routable Public IP for the PHPMyAdmin VM.
-#
-# Notes:
-#   - Standard SKU is required for certain features and is recommended
-#   - domain_name_label creates a public DNS name under:
-#       <label>.<region>.cloudapp.azure.com
-# =================================================================================
-resource "azurerm_public_ip" "phpmyadmin_vm_public_ip" {
-  name                = "phpmyadmin-vm-public-ip"
-  location            = var.project_location
-  resource_group_name = azurerm_resource_group.project_rg.name
-  allocation_method   = "Static"
-  sku                 = "Standard"
-  domain_name_label   = "phpmyadmin-${random_string.suffix.result}"
+  depends_on = [oci_mysql_mysql_db_system.mysql]
 }
