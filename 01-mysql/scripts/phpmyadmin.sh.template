@@ -30,6 +30,10 @@ done
 
 apt-get install -y apache2 php php-mysql php-mbstring php-zip php-gd php-json php-curl php-xml unzip mysql-client-core-8.0
 
+# OCI Ubuntu images have a catch-all iptables REJECT rule — insert ACCEPT for
+# port 80 before it so external traffic can reach Apache
+iptables -I INPUT 5 -p tcp --dport 80 -j ACCEPT
+
 # Set ubuntu user password for SSH password / console fallback
 echo "ubuntu:${VM_PASSWORD}" | chpasswd
 

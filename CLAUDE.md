@@ -82,6 +82,9 @@ Both lists allow unrestricted egress.
 2. **apt lock race:** OCI boots cloud-init so fast that `apt-daily` grabs the
    apt lock first. Fix: retry loop on `apt-get update` with `pkill -9 -f apt`.
 3. **IPv6 / IGW:** Force IPv4 for apt via `/etc/apt/apt.conf.d/99force-ipv4`.
+4. **iptables catch-all REJECT:** OCI Ubuntu images have a catch-all iptables
+   REJECT rule at INPUT position 5. Port 80 is not pre-allowed. Fix:
+   `iptables -I INPUT 5 -p tcp --dport 80 -j ACCEPT`.
 
 ## SSH to phpMyAdmin VM
 
