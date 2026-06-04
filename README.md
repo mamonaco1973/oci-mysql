@@ -6,7 +6,7 @@ The deployment provisions a fully managed OCI MySQL HeatWave DB System with no p
 
 As part of the setup, the [Sakila](https://dev.mysql.com/doc/sakila/en/) sample database—a fictional movie rental database—is loaded into the MySQL instance to demonstrate real-world queries, administration, and access control in a secure, private cloud environment.
 
-![diagram](azure-mysql.png)
+![diagram](oci-mysql.png)
 
 ## What You'll Learn
 
