@@ -21,6 +21,7 @@ PHPMYADMIN_URL="http://${PHPMYADMIN_IP}"
 
 echo "NOTE: phpMyAdmin endpoint: ${PHPMYADMIN_URL}"
 echo "NOTE: MySQL private IP:    ${MYSQL_IP}"
+echo "NOTE: SSH command: ssh -i 01-mysql/keys/Private_Key -o StrictHostKeyChecking=no ubuntu@${PHPMYADMIN_IP}"
 
 # ------------------------------------------------------------------------------
 # Wait for phpMyAdmin to become reachable
