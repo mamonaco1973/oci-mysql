@@ -4,8 +4,8 @@
 # the MySQL DB System.
 #
 # CIDR layout — 10.0.0.0/23:
-#   10.0.0.0/25  — mysql-subnet (private, DB system)
-#   10.0.1.0/25  — vm-subnet    (public,  phpMyAdmin)
+#   10.0.0.0/25  — private-subnet (private, DB system)
+#   10.0.1.0/25  — public-subnet    (public,  phpMyAdmin)
 # ================================================================================
 
 resource "oci_core_vcn" "main" {
@@ -36,7 +36,7 @@ resource "oci_core_nat_gateway" "main" {
 # Route Tables
 # ================================================================================
 
-# vm-subnet routes through the IGW — phpMyAdmin needs a public IP and internet
+# public-subnet routes through the IGW — phpMyAdmin needs a public IP and internet
 resource "oci_core_route_table" "vm" {
   compartment_id = var.compartment_ocid
   vcn_id         = oci_core_vcn.main.id
@@ -49,7 +49,7 @@ resource "oci_core_route_table" "vm" {
   }
 }
 
-# mysql-subnet routes through NAT — DB system has no public endpoint
+# private-subnet routes through NAT — DB system has no public endpoint
 resource "oci_core_route_table" "mysql" {
   compartment_id = var.compartment_ocid
   vcn_id         = oci_core_vcn.main.id
@@ -134,7 +134,7 @@ resource "oci_core_subnet" "mysql" {
   compartment_id    = var.compartment_ocid
   vcn_id            = oci_core_vcn.main.id
   cidr_block        = "10.0.0.0/25"
-  display_name      = "mysql-subnet"
+  display_name      = "private-subnet"
   dns_label         = "mysqlsub"
   route_table_id    = oci_core_route_table.mysql.id
   security_list_ids = [oci_core_security_list.mysql.id]
@@ -147,7 +147,7 @@ resource "oci_core_subnet" "vm" {
   compartment_id    = var.compartment_ocid
   vcn_id            = oci_core_vcn.main.id
   cidr_block        = "10.0.1.0/25"
-  display_name      = "vm-subnet"
+  display_name      = "public-subnet"
   dns_label         = "vmsub"
   route_table_id    = oci_core_route_table.vm.id
   security_list_ids = [oci_core_security_list.vm.id]

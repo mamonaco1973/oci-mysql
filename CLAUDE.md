@@ -22,10 +22,10 @@ Single Terraform phase in `01-mysql/`. No modules, no workspaces.
 
 ```
 VCN: 10.0.0.0/23
-  ├── mysql-subnet (10.0.0.0/25) — private, NAT gateway
+  ├── private-subnet (10.0.0.0/25) — private, NAT gateway
   │     └── oci_mysql_mysql_db_system  (MySQL.2, port 3306)
   │
-  └── vm-subnet (10.0.1.0/25) — public, Internet Gateway
+  └── public-subnet (10.0.1.0/25) — public, Internet Gateway
         └── oci_core_instance  (Ubuntu 24.04, phpMyAdmin, port 80)
                                    └── connects to MySQL private IP over TLS
 ```
@@ -70,8 +70,8 @@ share the same rules.
 
 | Subnet | Security List | Rules |
 |--------|--------------|-------|
-| mysql-subnet | `mysql-sl` | Ingress TCP 3306 from `10.0.1.0/25` only |
-| vm-subnet | `mysql-vm-sl` | Ingress TCP 80 and TCP 22 from `0.0.0.0/0` |
+| private-subnet | `mysql-sl` | Ingress TCP 3306 from `10.0.1.0/25` only |
+| public-subnet | `mysql-vm-sl` | Ingress TCP 80 and TCP 22 from `0.0.0.0/0` |
 
 Both lists allow unrestricted egress.
 

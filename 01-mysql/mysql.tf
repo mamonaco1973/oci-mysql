@@ -8,7 +8,7 @@
 #   - MySQL.2 provides 2 OCPUs and 32 GB RAM — substitute MySQL.Free for
 #     always-free tier (1 OCPU / 2 GB, one per tenancy limit applies)
 #   - DB System provisioning typically takes 10-20 minutes
-#   - The ip_address attribute holds the private IP assigned from mysql-subnet
+#   - The ip_address attribute holds the private IP assigned from private-subnet
 # ================================================================================
 
 resource "oci_mysql_mysql_db_system" "mysql" {

@@ -79,8 +79,8 @@ After applying the Terraform configuration, the following OCI resources will be 
 
 ### VCN & Subnets
 - VCN: `mysql-vcn` — `10.0.0.0/23`
-- Private subnet: `mysql-subnet` — `10.0.0.0/25` (MySQL DB System, no public IPs)
-- Public subnet: `vm-subnet` — `10.0.1.0/25` (phpMyAdmin VM, public IP assigned)
+- Private subnet: `private-subnet` — `10.0.0.0/25` (MySQL DB System, no public IPs)
+- Public subnet: `public-subnet` — `10.0.1.0/25` (phpMyAdmin VM, public IP assigned)
 
 ### Gateways & Route Tables
 - Internet Gateway — routes public traffic to/from the VM subnet
